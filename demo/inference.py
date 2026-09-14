@@ -1,6 +1,15 @@
+import av, numpy as np
 import torch, torchvision, transformers, collections
 from dataclasses import asdict
-from torchvision.io import read_video
+
+def read_video(video_path, pts_unit='sec', output_format='TCHW'):
+    # torchvision.io.read_video no longer exists in newer torchvision releases
+    # (video decoding moved to torchcodec); read frames via PyAV instead.
+    container = av.open(video_path)
+    frames = [f.to_ndarray(format='rgb24') for f in container.decode(video=0)]
+    container.close()
+    video = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).contiguous()  # T,C,H,W uint8
+    return video, None, None
 
 from models import build_model_and_tokenizer, parse_args, fast_greedy_generate
 
