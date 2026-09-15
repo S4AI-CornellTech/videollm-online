@@ -1,5 +1,5 @@
 import av, numpy as np
-import torch, torchvision, transformers, collections
+import torch, torchvision, transformers, collections, time
 from dataclasses import asdict
 
 def read_video(video_path, pts_unit='sec', output_format='TCHW'):
@@ -45,6 +45,15 @@ class LiveInfer:
         # app
         self.reset()
 
+        # phase timing: chronological list of (phase_name, t_start, t_end, unit_count),
+        # t_start/t_end are time.perf_counter() timestamps (monotonic, comparable within a session)
+        self.phase_timing = args.phase_timing
+        self.phase_events = []
+
+    def _record_phase(self, name, t_start, unit_count=1):
+        if self.phase_timing:
+            self.phase_events.append((name, t_start, time.perf_counter(), unit_count))
+
     def _call_for_response(self, video_time, query):
         if query is not None:
             self.last_ids = self.tokenizer.apply_chat_template([{'role': 'user', 'content': query}], add_stream_query_prompt=True, add_generation_prompt=True, return_tensors='pt').to('cuda')
@@ -52,7 +61,12 @@ class LiveInfer:
             assert self.last_ids == 933, f'{self.last_ids} != 933' # HACK, 933 = ]\n
             self.last_ids = self._added_stream_generation_ids
         inputs_embeds = self.model.get_input_embeddings()(self.last_ids)
+        if self.phase_timing:
+            t0 = time.perf_counter()
         output_ids, self.past_key_values = fast_greedy_generate(model=self.model, inputs_embeds=inputs_embeds, past_key_values=self.past_key_values, eos_token_id=self.eos_token_id, inplace_output_ids=self.inplace_output_ids)
+        if self.phase_timing:
+            torch.cuda.synchronize()
+            self._record_phase('decode', t0, unit_count=output_ids.shape[1])
         self.last_ids = output_ids[:, -1:]
         if query:
             query = f'(Video Time = {video_time}s) User: {query}'
@@ -74,7 +88,12 @@ class LiveInfer:
                 self.model.get_input_embeddings()(self.last_ids).view(1, -1, self.hidden_size),
                 frame_embeds.view(1, -1, self.hidden_size),
             ], dim=1)
+            if self.phase_timing:
+                t0 = time.perf_counter()
             outputs = self.model(inputs_embeds=inputs_embeds, use_cache=True, past_key_values=self.past_key_values)
+            if self.phase_timing:
+                torch.cuda.synchronize()
+                self._record_phase('frame_prefill', t0)
             self.past_key_values = outputs.past_key_values
             # 2. if the same time, response after frame at that time
             if self.query_queue and video_time >= self.query_queue[0][0]:
@@ -111,7 +130,12 @@ class LiveInfer:
         frame_idx = int(video_time * self.frame_fps)
         if frame_idx > self.last_frame_idx:
             ranger = range(self.last_frame_idx + 1, frame_idx + 1)
+            if self.phase_timing:
+                t0 = time.perf_counter()
             frames_embeds = self.model.visual_embed(self.video_tensor[ranger]).split(self.frame_num_tokens)
+            if self.phase_timing:
+                torch.cuda.synchronize()
+                self._record_phase('vision_embed', t0, unit_count=len(ranger))
             self.frame_embeds_queue.extend([(r / self.frame_fps, frame_embeds) for r, frame_embeds in zip(ranger, frames_embeds)])
         self.last_frame_idx = frame_idx
         self.video_time = video_time
@@ -123,8 +147,12 @@ class LiveInfer:
         logger.warning(f'{video_path} -> {self.video_tensor.shape}, {self.frame_fps} FPS')
 
     def __call__(self, ):
+        if self.phase_timing:
+            t0 = time.perf_counter()
         while not self.frame_embeds_queue:
             continue
+        if self.phase_timing:
+            self._record_phase('busy_wait', t0)
         video_time, query = self._call_for_streaming()
         response = None
         if video_time is not None:

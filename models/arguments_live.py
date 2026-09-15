@@ -26,6 +26,7 @@ class LiveTrainingArguments(TrainingArguments):
     augmentation: bool = False
     attn_implementation: str = 'flash_attention_2'
     output_dir: str = 'outputs/debug'
+    phase_timing: bool = False
 
 @dataclass
 class LiveOneTrainingArguments(LiveTrainingArguments):

@@ -27,7 +27,8 @@ def main(liveinfer: LiveInfer):
     timecosts = []
     pbar = tqdm.tqdm(total=liveinfer.num_video_frames, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}{postfix}]")
     history = {'video_path': src_video_path, 'frame_fps': liveinfer.frame_fps, 'conversation': []} 
-    for i in range(100):
+    for i in range(liveinfer.num_video_frames):
+    # for i in range(100):
         # liveinfer.frame_token_interval_threshold -= 0.00175 # decay
         start_time = time.time()
         liveinfer.input_video_stream(i / liveinfer.frame_fps)
@@ -47,6 +48,15 @@ def main(liveinfer: LiveInfer):
             history['conversation'].append({'time': liveinfer.video_time, 'fps': fps, 'cost': timecosts[-1]})
     json.dump(history, open(save_history_path, 'w'), indent=4)
     print(f'The conversation history has been saved to {save_history_path}.')
+
+    if liveinfer.phase_timing:
+        from profiling_scripts.timeline import print_phase_summary, plot_phase_timeline
+        print_phase_summary(liveinfer.phase_events)
+        plot_path = save_history_path.replace('.json', '_phase_timeline.png')
+        plot_phase_timeline(liveinfer.phase_events, plot_path)
+        events_path = save_history_path.replace('.json', '_phase_events.json')
+        json.dump(liveinfer.phase_events, open(events_path, 'w'), indent=2)
+        print(f'Raw phase events saved to {events_path}.')
 
 if __name__ == '__main__':
     liveinfer = LiveInfer()
