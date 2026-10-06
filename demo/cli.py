@@ -9,10 +9,17 @@ logger = transformers.logging.get_logger('liveinfer')
 # python -m demo.cli --resume_from_checkpoint ... 
 
 def main(liveinfer: LiveInfer):
-    src_video_path = 'demo/assets/cooking.mp4'
+    src_video_path = liveinfer.demo_video_path
     name, ext = os.path.splitext(src_video_path)
     ffmpeg_video_path = os.path.join('demo/assets/cache', name + f'_{liveinfer.frame_fps}fps_{liveinfer.frame_resolution}' + ext)
     save_history_path = src_video_path.replace('.mp4', '.json')
+
+    power_meter = None
+    if liveinfer.phase_timing:
+        from profiling_scripts.power_meter import PowerMeter
+        power_meter = PowerMeter()
+        power_meter.__enter__()
+
     if not os.path.exists(ffmpeg_video_path):
         os.makedirs(os.path.dirname(ffmpeg_video_path), exist_ok=True)
         ffmpeg_once(src_video_path, ffmpeg_video_path, fps=liveinfer.frame_fps, resolution=liveinfer.frame_resolution)
@@ -50,13 +57,31 @@ def main(liveinfer: LiveInfer):
     print(f'The conversation history has been saved to {save_history_path}.')
 
     if liveinfer.phase_timing:
-        from profiling_scripts.timeline import print_phase_summary, plot_phase_timeline
+        power_meter.__exit__(None, None, None)
+
+        from profiling_scripts.timeline import (
+            print_phase_summary, plot_phase_timeline,
+            print_phase_energy_summary, plot_phase_timeline_with_power,
+            plot_phase_timeline_overlay,
+        )
         print_phase_summary(liveinfer.phase_events)
-        plot_path = save_history_path.replace('.json', '_phase_timeline.png')
-        plot_phase_timeline(liveinfer.phase_events, plot_path)
+        print_phase_energy_summary(liveinfer.phase_events, power_meter)
+
+        video_title = os.path.basename(name)
+        plot_path = save_history_path.replace('.json', '_phase_timeline.pdf')
+        plot_phase_timeline(liveinfer.phase_events, plot_path, title=video_title)
+        power_plot_path = save_history_path.replace('.json', '_phase_power_timeline.pdf')
+        plot_phase_timeline_with_power(liveinfer.phase_events, power_meter.samples, power_plot_path, title=video_title)
+        overlay_plot_path = save_history_path.replace('.json', '_phase_power_overlay.pdf')
+        plot_phase_timeline_overlay(liveinfer.phase_events, power_meter.samples, overlay_plot_path, title=video_title)
+
         events_path = save_history_path.replace('.json', '_phase_events.json')
         json.dump(liveinfer.phase_events, open(events_path, 'w'), indent=2)
         print(f'Raw phase events saved to {events_path}.')
+
+        power_events_path = save_history_path.replace('.json', '_power_samples.json')
+        json.dump(power_meter.samples, open(power_events_path, 'w'), indent=2)
+        print(f'Raw power samples saved to {power_events_path}.')
 
 if __name__ == '__main__':
     liveinfer = LiveInfer()

@@ -5,6 +5,9 @@ __pycache__/
 /ffmpeg
 /demo/assets/*.json
 /demo/assets/cache
+# generated profiling plots (demo.cli --phase_timing)
+/demo/assets/*.pdf
+/demo/assets/*.png
 /demo/rendering/ChatTTS
 *.wav
 /demo/rendering/*.mp4

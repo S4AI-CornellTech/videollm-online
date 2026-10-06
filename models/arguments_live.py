@@ -27,6 +27,7 @@ class LiveTrainingArguments(TrainingArguments):
     attn_implementation: str = 'flash_attention_2'
     output_dir: str = 'outputs/debug'
     phase_timing: bool = False
+    demo_video_path: str = 'demo/assets/cooking.mp4'
 
 @dataclass
 class LiveOneTrainingArguments(LiveTrainingArguments):

@@ -49,6 +49,7 @@ class LiveInfer:
         # t_start/t_end are time.perf_counter() timestamps (monotonic, comparable within a session)
         self.phase_timing = args.phase_timing
         self.phase_events = []
+        self.demo_video_path = args.demo_video_path
 
     def _record_phase(self, name, t_start, unit_count=1):
         if self.phase_timing:
