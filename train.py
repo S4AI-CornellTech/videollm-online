@@ -1,4 +1,6 @@
+import os
 from dataclasses import asdict
+from transformers.trainer_utils import get_last_checkpoint
 
 from models import build_model_and_tokenizer, parse_args
 from data import build_concat_train_dataset, build_eval_dataset_dict, get_data_collator, get_compute_metrics_dict
@@ -21,7 +23,9 @@ def train():
         data_collator=data_collator,
         compute_metrics=compute_metrics_dict,
     )
-    trainer.train()
+    # resume from the latest checkpoint-* in output_dir, so a job killed by the wall-time limit can just be resubmitted
+    last_checkpoint = get_last_checkpoint(args.output_dir) if os.path.isdir(args.output_dir) else None
+    trainer.train(resume_from_checkpoint=last_checkpoint)
     trainer.save_model()
 
     if eval_dataset_dict is not None:

@@ -70,7 +70,8 @@ def distributed_ffmpeg(*, src_root: str, fps: int = None, resolution: int = None
     env = submitit.JobEnvironment()
     src_root = src_root.rstrip('/')
     pather = pathlib.Path(src_root)
-    src_paths = [str(path) for path in pather.rglob('*') if path.is_file() and str(path).endswith('.mp4')]
+    # name.count('.') == 1 skips in-progress downloads (id.f135.mp4, id.temp.mp4) when downloads run at the same time; video ids have no dots
+    src_paths = [str(path) for path in pather.rglob('*') if path.is_file() and path.name.endswith('.mp4') and path.name.count('.') == 1]
     dst_root = src_root
     if fps is not None:
         dst_root += f'_{fps}fps'
@@ -81,7 +82,11 @@ def distributed_ffmpeg(*, src_root: str, fps: int = None, resolution: int = None
         if i % env.num_tasks != env.global_rank:
             continue
         dst_path = src_path.replace(src_root, dst_root)
-        ffmpeg_once(src_path, dst_path, fps=fps, resolution=resolution, pad=pad, mode=mode)
+        if os.path.exists(dst_path):
+            continue
+        tmp_path = dst_path[:-len('.mp4')] + '.part.mp4' # rename when done, so killed jobs never leave a truncated dst_path
+        ffmpeg_once(src_path, tmp_path, fps=fps, resolution=resolution, pad=pad, mode=mode)
+        os.replace(tmp_path, dst_path)
 
 def distributed_encode(*, src_root: str, vision_pretrained: str, vision_encode: callable, batch_size: int, embed_mark: str, save_bf16: bool = False, **kwargs):
     env = submitit.JobEnvironment()
@@ -96,12 +101,17 @@ def distributed_encode(*, src_root: str, vision_pretrained: str, vision_encode: 
         frame_path = os.path.join(src_root, file)
         save_path = os.path.splitext(frame_path)[0] + '.pt'
         save_path = save_path.replace(src_root, dst_root)
-        frames = torchvision.io.read_video(frame_path, pts_unit='sec', output_format='TCHW')[0]
+        if os.path.exists(save_path):
+            continue
+        import av
+        with av.open(frame_path) as container:
+            frames = torch.stack([torch.from_numpy(f.to_ndarray(format='rgb24')).permute(2, 0, 1) for f in container.decode(video=0)])
         with torch.no_grad():
             frames = torch.cat([vision_encode(model, batch.to(f'cuda:{env.local_rank}')).cpu() for batch in frames.split(batch_size)])
         if save_bf16:
             frames = frames.to(torch.bfloat16)
-        torch.save(frames, save_path)
+        torch.save(frames, save_path + '.tmp')
+        os.replace(save_path + '.tmp', save_path)
 
 def load_frames(path: str, start: float, end: float, num_threads=10) -> torch.Tensor:
     """

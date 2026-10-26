@@ -17,6 +17,7 @@ class LiveTrainingArguments(TrainingArguments):
     lora_r: int = 128
     lora_alpha: int = 256
     finetune_modules: list[str] = field(default_factory=lambda: ['connector'])
+    init_from_checkpoint: str = None # PEFT checkpoint to continue training from; lora_* / finetune_modules are then taken from it
     frame_fps: int = 2 # for training. inference can be 10
     frame_token_cls: bool = None
     frame_token_pooled: list[int] = None
@@ -25,6 +26,7 @@ class LiveTrainingArguments(TrainingArguments):
     frame_token_interval_threshold: float = 0.0
     augmentation: bool = False
     attn_implementation: str = 'flash_attention_2'
+    rope_scaling_factor: float = None # e.g. 4: dynamic NTK RoPE scaling for inputs longer than the LLM's 8k context
     output_dir: str = 'outputs/debug'
     phase_timing: bool = False
 

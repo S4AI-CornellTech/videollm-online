@@ -22,12 +22,15 @@ class COIN:
                 text=COIN._clean_step(step['label']),
             ) for step in anno['annotation']],
         } for video_uid, anno in annos.items() if (split in anno['subset'].lower()) and (video_uid in self.metadata)]
-        self.task_categories = list(set([v['task'].lower() for v in self._annos]))
-        self.step_categories = list(set([step['text'].lower() for steps in self._annos for step in steps['steps']]))
+        # fuzzy-matching choices come from the full annotation file, so accuracy on a downloaded subset
+        # is not inflated by matching against fewer categories
+        self.task_categories = list(set([COIN._clean_task(anno['class']).lower() for anno in annos.values() if split in anno['subset'].lower()]))
+        self.step_categories = list(set([COIN._clean_step(step['label']).lower() for anno in annos.values() if split in anno['subset'].lower() for step in anno['annotation']]))
         self.annos: list[dict]
 
     def get_metadata(self, ):
-        metadata_path = f'{self.embed_dir}_metadata.json'
+        # COIN_METADATA pins the video list (e.g., a snapshot), so runs compared against each other see the same videos
+        metadata_path = os.environ.get('COIN_METADATA') or f'{self.embed_dir}_metadata.json'
         if os.path.exists(metadata_path):
             print(f'load {metadata_path}...')
             metadata = json.load(open(metadata_path))

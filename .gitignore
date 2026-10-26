@@ -9,3 +9,5 @@ __pycache__/
 *.wav
 /demo/rendering/*.mp4
 .DS_Store
+/vlo-env
+/cookies.txt

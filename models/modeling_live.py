@@ -193,13 +193,22 @@ def build_live(
     lora_alpha: int = None,
     set_vision_inside: bool = False,
     resume_from_checkpoint: str = '',
+    init_from_checkpoint: str = None,
     attn_implementation: str = 'flash_attention_2',
     torch_dtype: str | torch.dtype = 'auto',
+    rope_scaling_factor: float = None,
     **kwargs
-):  
+):
+    if rope_scaling_factor:
+        # dynamic NTK: positions beyond the LLM's 8k training length are stretched by up to this factor; shorter inputs are unchanged
+        kwargs['rope_scaling'] = {'rope_type': 'dynamic', 'factor': rope_scaling_factor}
     model = model_class.from_pretrained(llm_pretrained, config=config_class.from_pretrained(llm_pretrained, **kwargs), device_map='cpu', torch_dtype=torch_dtype, attn_implementation=attn_implementation)
     tokenizer = build_live_tokenizer_and_update_config(llm_pretrained, model.config)
-    if is_training:
+    if is_training and init_from_checkpoint:
+        # continue training an existing LoRA (e.g., chenjoya/videollm-online-8b-v1plus) instead of a fresh one
+        model = PeftModel.from_pretrained(model, init_from_checkpoint, is_trainable=True)
+        model.print_trainable_parameters()
+    elif is_training:
         lora_config = LoraConfig(
             r=lora_r,
             lora_alpha=lora_alpha,

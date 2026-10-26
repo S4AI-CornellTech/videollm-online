@@ -11,6 +11,9 @@ logger = logging.get_logger(__name__)
 
 class LiveLlamaForCausalLM(LlamaForCausalLM, LiveMixin):
     config_class = LiveLlamaConfig
+    # forward() takes **kwargs but computes its own mean loss and ignores num_items_in_batch. Without this,
+    # transformers>=4.46 Trainer skips dividing by gradient_accumulation_steps (loss and grads summed, not averaged)
+    accepts_loss_kwargs = False
 
     def __init__(self, config: LiveLlamaConfig):
         super().__init__(config)
