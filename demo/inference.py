@@ -49,10 +49,24 @@ class LiveInfer:
         # t_start/t_end are time.perf_counter() timestamps (monotonic, comparable within a session)
         self.phase_timing = args.phase_timing
         self.phase_events = []
+        # with phase timing, also how the KV cache and GPU memory grow: one row per frame prefill and per response
+        self.growth_events = []
 
     def _record_phase(self, name, t_start, unit_count=1):
         if self.phase_timing:
             self.phase_events.append((name, t_start, time.perf_counter(), unit_count))
+
+    def _kv_tokens(self):
+        if self.past_key_values is None:
+            return 0
+        if hasattr(self.past_key_values, 'get_seq_length'):
+            return self.past_key_values.get_seq_length()
+        return self.past_key_values[0][0].shape[-2] # legacy tuple cache
+
+    def _record_growth(self, name, video_time, t_start, unit_count=1):
+        if self.phase_timing:
+            self.growth_events.append({'phase': name, 'video_time': video_time, 'kv_tokens': self._kv_tokens(), 'seconds': time.perf_counter() - t_start,
+                                       'units': unit_count, 'allocated_gb': torch.cuda.memory_allocated() / 1e9})
 
     def _call_for_response(self, video_time, query):
         if query is not None:
@@ -67,6 +81,7 @@ class LiveInfer:
         if self.phase_timing:
             torch.cuda.synchronize()
             self._record_phase('decode', t0, unit_count=output_ids.shape[1])
+            self._record_growth('decode', video_time, t0, unit_count=output_ids.shape[1])
         self.last_ids = output_ids[:, -1:]
         if query:
             query = f'(Video Time = {video_time}s) User: {query}'
@@ -95,6 +110,8 @@ class LiveInfer:
                 torch.cuda.synchronize()
                 self._record_phase('frame_prefill', t0)
             self.past_key_values = outputs.past_key_values
+            if self.phase_timing:
+                self._record_growth('frame_prefill', video_time, t0)
             # 2. if the same time, response after frame at that time
             if self.query_queue and video_time >= self.query_queue[0][0]:
                 video_time, query = self.query_queue.popleft()
