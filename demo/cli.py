@@ -20,6 +20,11 @@ def main(liveinfer: LiveInfer):
     
     liveinfer.load_video(ffmpeg_video_path)
     liveinfer.input_query_stream('Please narrate the video in real time.', video_time=0.0)
+    # QUERY_EVERY=<seconds>: also ask a question at fixed video times, so decode cost is sampled evenly as the KV cache grows
+    query_every = float(os.environ.get('QUERY_EVERY', 0))
+    if query_every > 0:
+        for t in range(1, int(liveinfer.video_duration // query_every) + 1):
+            liveinfer.input_query_stream('What is the person doing now?', video_time=t * query_every)
     # liveinfer.input_query_stream('Hi, who are you?', video_time=1.0)
     # liveinfer.input_query_stream('Yes, I want to check its safety.', video_time=3.0)
     # liveinfer.input_query_stream('No, I am going to install something to alert pedestrians to move aside. Could you guess what it is?', video_time=12.5)
