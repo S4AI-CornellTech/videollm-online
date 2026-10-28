@@ -11,3 +11,5 @@ __pycache__/
 .DS_Store
 /vlo-env
 /cookies.txt
+/papers/*.pdf
+/papers/vla/*.pdf
