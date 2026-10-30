@@ -11,7 +11,19 @@ def read_video(video_path, pts_unit='sec', output_format='TCHW'):
     video = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).contiguous()  # T,C,H,W uint8
     return video, None, None
 
+def system_available_gb():
+    """MemAvailable from /proc/meminfo: on unified-memory devices (DGX Spark, Jetson) the GPU allocates from this pool."""
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) / 1e6  # kB -> GB
+    except OSError:
+        pass
+    return None
+
 from models import build_model_and_tokenizer, parse_args, fast_greedy_generate
+from models.kv_cache import PreallocatedCache
 
 logger = transformers.logging.get_logger('liveinfer')
 
@@ -49,6 +61,8 @@ class LiveInfer:
         # t_start/t_end are time.perf_counter() timestamps (monotonic, comparable within a session)
         self.phase_timing = args.phase_timing
         self.phase_events = []
+        # preallocated KV cache (models/kv_cache.py): 0 = growing cache, -1 = sized for the whole video, N = N tokens
+        self.kv_prealloc = args.kv_prealloc
         # with phase timing, also how the KV cache and GPU memory grow: one row per frame prefill and per response
         self.growth_events = []
 
@@ -66,7 +80,8 @@ class LiveInfer:
     def _record_growth(self, name, video_time, t_start, unit_count=1):
         if self.phase_timing:
             self.growth_events.append({'phase': name, 'video_time': video_time, 'kv_tokens': self._kv_tokens(), 'seconds': time.perf_counter() - t_start,
-                                       'units': unit_count, 'allocated_gb': torch.cuda.memory_allocated() / 1e9})
+                                       'units': unit_count, 'allocated_gb': torch.cuda.memory_allocated() / 1e9,
+                                       'reserved_gb': torch.cuda.memory_reserved() / 1e9, 'system_available_gb': system_available_gb()})
 
     def _call_for_response(self, video_time, query):
         if query is not None:
@@ -97,6 +112,10 @@ class LiveInfer:
             video_time, frame_embeds = self.frame_embeds_queue.popleft()
             if not self.past_key_values:
                 self.last_ids = self._start_ids
+                if self.kv_prealloc and self.past_key_values is None:
+                    # whole video: every frame adds frame_num_tokens + 1 interval token; leave room for text
+                    capacity = self.kv_prealloc if self.kv_prealloc > 0 else self.num_video_frames * (self.frame_num_tokens + 1) + 8192
+                    self.past_key_values = PreallocatedCache(capacity)
             elif self.last_ids == self.eos_token_id:
                 self.last_ids = torch.cat([self.last_ids, self._added_stream_prompt_ids], dim=1)
             inputs_embeds = torch.cat([

@@ -27,6 +27,7 @@ class LiveTrainingArguments(TrainingArguments):
     augmentation: bool = False
     attn_implementation: str = 'flash_attention_2'
     rope_scaling_factor: float = None # e.g. 4: dynamic NTK RoPE scaling for inputs longer than the LLM's 8k context
+    kv_prealloc: int = 0 # demo inference: 0 = growing KV cache, -1 = preallocate for the whole video, N = preallocate N tokens
     output_dir: str = 'outputs/debug'
     phase_timing: bool = False
 
