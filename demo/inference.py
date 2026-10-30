@@ -47,7 +47,7 @@ class LiveInfer:
         
         # generation
         self.system_prompt = args.system_prompt
-        self.inplace_output_ids = torch.zeros(1, 100, device='cuda', dtype=torch.long)
+        self.inplace_output_ids = torch.zeros(1, args.max_reply_tokens, device='cuda', dtype=torch.long)  # longest reply
         self.frame_token_interval_threshold = 0.725
         self.eos_token_id = self.model.config.eos_token_id
         self._start_ids = self.tokenizer.apply_chat_template([{'role': 'system', 'content': self.system_prompt}], add_stream_prompt=True, return_tensors='pt').to('cuda')
@@ -77,9 +77,9 @@ class LiveInfer:
             return self.past_key_values.get_seq_length()
         return self.past_key_values[0][0].shape[-2] # legacy tuple cache
 
-    def _record_growth(self, name, video_time, t_start, unit_count=1):
+    def _record_growth(self, name, video_time, t_start, unit_count=1, **extra):
         if self.phase_timing:
-            self.growth_events.append({'phase': name, 'video_time': video_time, 'kv_tokens': self._kv_tokens(), 'seconds': time.perf_counter() - t_start,
+            self.growth_events.append({**extra, 'phase': name, 'video_time': video_time, 'kv_tokens': self._kv_tokens(), 'seconds': time.perf_counter() - t_start,
                                        'units': unit_count, 'allocated_gb': torch.cuda.memory_allocated() / 1e9,
                                        'reserved_gb': torch.cuda.memory_reserved() / 1e9, 'system_available_gb': system_available_gb()})
 
@@ -96,7 +96,15 @@ class LiveInfer:
         if self.phase_timing:
             torch.cuda.synchronize()
             self._record_phase('decode', t0, unit_count=output_ids.shape[1])
-            self._record_growth('decode', video_time, t0, unit_count=output_ids.shape[1])
+            ids = output_ids[0]
+            # raw reply with special tokens kept: degenerate replies can be mostly <v> frame placeholders, which the
+            # normal (skip_special_tokens) decode hides
+            self._record_growth('decode', video_time, t0, unit_count=output_ids.shape[1],
+                                reply=self.tokenizer.decode(ids, skip_special_tokens=True),
+                                raw_reply=self.tokenizer.decode(ids, skip_special_tokens=False),
+                                v_tokens=int((ids == self.model.config.v_placeholder_id).sum()),
+                                interval_tokens=int((ids == self.frame_token_interval_id).sum()) if self.frame_token_interval_id is not None else 0,
+                                ended_with_eos=bool(ids[-1] == self.eos_token_id), query=query)
         self.last_ids = output_ids[:, -1:]
         if query:
             query = f'(Video Time = {video_time}s) User: {query}'

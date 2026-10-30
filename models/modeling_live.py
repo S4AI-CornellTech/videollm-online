@@ -197,11 +197,15 @@ def build_live(
     attn_implementation: str = 'flash_attention_2',
     torch_dtype: str | torch.dtype = 'auto',
     rope_scaling_factor: float = None,
+    rope_scaling_type: str = 'dynamic',
     **kwargs
 ):
     if rope_scaling_factor:
-        # dynamic NTK: positions beyond the LLM's 8k training length are stretched by up to this factor; shorter inputs are unchanged
-        kwargs['rope_scaling'] = {'rope_type': 'dynamic', 'factor': rope_scaling_factor}
+        # 'dynamic' (NTK): frequencies are recomputed as the sequence grows, so shorter inputs are unchanged; fine for
+        #   one-pass evaluation, but in streaming the cached keys were encoded with earlier frequencies.
+        # 'yarn': static, fixed from the first token, so a growing KV cache stays consistent (use this for streaming).
+        #   Don't pass original_max_position_embeddings: transformers would then recompute factor = max_pos / original = 1.
+        kwargs['rope_scaling'] = {'rope_type': rope_scaling_type, 'factor': rope_scaling_factor}
     model = model_class.from_pretrained(llm_pretrained, config=config_class.from_pretrained(llm_pretrained, **kwargs), device_map='cpu', torch_dtype=torch_dtype, attn_implementation=attn_implementation)
     tokenizer = build_live_tokenizer_and_update_config(llm_pretrained, model.config)
     if is_training and init_from_checkpoint:
