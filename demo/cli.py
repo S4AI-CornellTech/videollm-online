@@ -11,14 +11,17 @@ logger = transformers.logging.get_logger('liveinfer')
 def main(liveinfer: LiveInfer):
     src_video_path = os.environ.get('VIDEO', 'demo/assets/cooking.mp4') # VIDEO=<path> to profile another (e.g. longer) video
     name, ext = os.path.splitext(src_video_path)
-    ffmpeg_video_path = os.path.join('demo/assets/cache', name + f'_{liveinfer.frame_fps}fps_{liveinfer.frame_resolution}' + ext)
-    save_history_path = src_video_path.replace('.mp4', '.json')
+    ffmpeg_video_path = os.path.join('demo/assets/cache', name + f'_{liveinfer.frame_fps:g}fps_{liveinfer.frame_resolution}' + ext)
+    # OUT_PREFIX=<path without extension>: where the history / phase / growth files go (default: next to the video)
+    save_history_path = os.environ.get('OUT_PREFIX', name) + '.json'
     if not os.path.exists(ffmpeg_video_path):
         os.makedirs(os.path.dirname(ffmpeg_video_path), exist_ok=True)
         ffmpeg_once(src_video_path, ffmpeg_video_path, fps=liveinfer.frame_fps, resolution=liveinfer.frame_resolution)
         logger.warning(f'{src_video_path} -> {ffmpeg_video_path}, {liveinfer.frame_fps} FPS, {liveinfer.frame_resolution} Resolution')
     
     liveinfer.load_video(ffmpeg_video_path)
+    if os.environ.get('WARMUP', '1') != '0': # WARMUP=0: keep the cold start inside the measured session
+        liveinfer.warmup()
     liveinfer.input_query_stream('Please narrate the video in real time.', video_time=0.0)
     # QUERY_EVERY=<seconds>: also ask a question at fixed video times, so decode cost is sampled evenly as the KV cache grows
     query_every = float(os.environ.get('QUERY_EVERY', 0))
@@ -39,6 +42,8 @@ def main(liveinfer: LiveInfer):
     timecosts = []
     pbar = tqdm.tqdm(total=num_frames, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}{postfix}]")
     history = {'video_path': src_video_path, 'frame_fps': liveinfer.frame_fps, 'conversation': []}
+    # wall-clock and perf_counter at the start and end of streaming, to line phase events up with an external power log
+    session = {'wall_start': time.time(), 'perf_start': time.perf_counter()}
     for i in range(num_frames):
         if liveinfer.phase_timing and i and i % int(60 * liveinfer.frame_fps) == 0:
             json.dump(liveinfer.growth_events, open(growth_path, 'w'), indent=1)  # every minute of video, so a crash keeps the data
@@ -64,6 +69,8 @@ def main(liveinfer: LiveInfer):
             print(response)
         if not query and not response:
             history['conversation'].append({'time': liveinfer.video_time, 'fps': fps, 'cost': timecosts[-1]})
+    session.update(wall_end=time.time(), perf_end=time.perf_counter(), frames=len(timecosts), video_seconds=len(timecosts) / liveinfer.frame_fps)
+    history['session'] = session
     json.dump(history, open(save_history_path, 'w'), indent=4)
     print(f'The conversation history has been saved to {save_history_path}.')
 

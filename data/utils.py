@@ -59,7 +59,7 @@ def ffmpeg_once(src_path: str, dst_path: str, *, fps: int = None, resolution: in
         '-threads', '10',
     ]
     if fps is not None:
-        command += ['-r', str(fps)]
+        command += ['-r', f'{fps:g}']
     if resolution is not None:
         command += ['-vf', f"scale='if(gt(iw\\,ih)\\,{resolution}\\,-2)':'if(gt(iw\\,ih)\\,-2\\,{resolution})',pad={resolution}:{resolution}:(ow-iw)/2:(oh-ih)/2:color='{pad}'"]
     command += [dst_path]
@@ -74,7 +74,7 @@ def distributed_ffmpeg(*, src_root: str, fps: int = None, resolution: int = None
     src_paths = [str(path) for path in pather.rglob('*') if path.is_file() and path.name.endswith('.mp4') and path.name.count('.') == 1]
     dst_root = src_root
     if fps is not None:
-        dst_root += f'_{fps}fps'
+        dst_root += f'_{fps:g}fps'
     if resolution is not None:
         assert (pad is not None)
         dst_root += f'_max{resolution}'

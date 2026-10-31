@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-BLUE, INK, MUTED, GRID, SURF, REF = '#2a78d6', '#0b0b0b', '#52514e', '#e4e3df', '#fcfcfb', '#8a8984'
+BLUE, INK, MUTED, GRID, SURF, REF, RED = '#2a78d6', '#0b0b0b', '#52514e', '#e4e3df', '#fcfcfb', '#8a8984', '#e34948'
 KV_BYTES_PER_TOKEN = 131072 # Llama-3-8B: 2 (K, V) x 32 layers x 8 KV heads x 128 dims x 2 bytes (bf16)
 
 def main():
@@ -96,6 +96,24 @@ def main():
         a3.text(0.5, top * 0.97, f'{(dec_ms > top).sum()} warm-up/short replies above {top:.0f} ms not shown', fontsize=8, color=MUTED, va='top')
     a3.set_ylabel('Decode (ms / token)')
     a3.set_xlabel('Video time (minutes)'); a3.set_xlim(0, args.until + 1)
+
+    # reply quality, if the run logged reply details: crosses for degenerate replies, a dashed line where they start for good
+    if dec and 'ended_with_eos' in dec[0]:
+        from profiling_scripts.degeneration_report import is_degenerate, sustained_onset
+        bad = np.array([is_degenerate(e) for e in dec])
+        onset = sustained_onset(dec)
+        if bad.any():
+            a3.plot(dec_min[bad], np.minimum(dec_ms[bad], top * 0.95), 'x', color=RED, ms=7, mew=2, label='degenerate reply')
+            a3.legend(frameon=False, loc='lower right', fontsize=8.5)
+        if onset:
+            t = onset['video_time'] / 60
+            for ax in axes:
+                ax.axvline(t, color=RED, lw=1.2, ls='--')
+            a1.annotate(f'replies break down from minute {t:.0f}\n({onset["kv_tokens"]:,} cached tokens)', (t, onset['kv_tokens'] / 1000),
+                        xytext=(-10, 18), textcoords='offset points', ha='right', fontsize=8.5, color=INK)
+        else:
+            a1.text(0.02, 0.92, 'no sustained breakdown of replies' + (f' ({bad.sum()} one-off degenerate replies)' if bad.any() else ''),
+                    transform=a1.transAxes, fontsize=8.5, color=MUTED, va='top')
     out = args.out or args.growth_json.replace('_growth.json', '_growth.png')
     fig.savefig(out, dpi=160, bbox_inches='tight')
     print(f'KV: {kv_a:.0f} tokens/min | prefill: {pr_b:.0f} ms + {pr_a * 1000:.2f} ms/1k tokens | decode: {dc_b:.0f} ms + {dc_a * 1000:.2f} ms/1k tokens per token')

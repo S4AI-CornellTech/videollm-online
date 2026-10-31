@@ -184,6 +184,17 @@ class LiveInfer:
         self.last_frame_idx = frame_idx
         self.video_time = video_time
     
+    @torch.no_grad()
+    def warmup(self):
+        """One throwaway frame through vision, prefill and a 1-token decode, so the first measured frame doesn't carry
+        one-time CUDA costs (kernel loading, autotuning): on a cold GPU that first frame can take tens of seconds."""
+        frame_embeds = self.model.visual_embed(self.video_tensor[:1])
+        inputs_embeds = torch.cat([self.model.get_input_embeddings()(self._start_ids), frame_embeds.view(1, -1, self.hidden_size)], dim=1)
+        cache = PreallocatedCache(inputs_embeds.shape[1] + 8) if self.kv_prealloc else None
+        outputs = self.model(inputs_embeds=inputs_embeds, use_cache=True, past_key_values=cache)
+        self.model(inputs_embeds=self.model.get_input_embeddings()(outputs.logits[:, -1:].argmax(-1)), use_cache=True, past_key_values=outputs.past_key_values)
+        torch.cuda.synchronize()
+
     def load_video(self, video_path):
         self.video_tensor = read_video(video_path, pts_unit='sec', output_format='TCHW')[0].to('cuda')
         self.num_video_frames = self.video_tensor.size(0)
