@@ -21,6 +21,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('files', nargs='+')
     p.add_argument('--out', required=True)
+    p.add_argument('--device', default='1× B300', help='named in the title')
     args = p.parse_args()
     by_fps = {} # files with the same fps (e.g. a smoke test) are merged
     for f in args.files:
@@ -36,7 +37,7 @@ def main():
     plt.rcParams.update({'font.size': 10, 'axes.edgecolor': GRID, 'axes.labelcolor': INK2, 'xtick.color': INK2,
                          'ytick.color': INK2, 'axes.titlecolor': INK, 'figure.facecolor': SURFACE, 'axes.facecolor': SURFACE})
     fig, ax = plt.subplots(2, 2, figsize=(12, 8.5))
-    fig.suptitle('Qwen3-VL-8B on OVO-Bench (offline, 1× B300): growth with clip length', color=INK, fontsize=13, x=0.01, ha='left')
+    fig.suptitle(f'Qwen3-VL-8B on OVO-Bench (offline, {args.device}): growth with clip length', color=INK, fontsize=13, x=0.01, ha='left')
     style = dict(s=9, alpha=0.55, linewidths=0)
 
     # 1. KV cache size vs clip time, per fps

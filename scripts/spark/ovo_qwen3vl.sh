@@ -11,6 +11,7 @@
 # Usage (from the repo root, conda env qwen3vl):
 #   bash scripts/spark/ovo_qwen3vl.sh
 #   FPS_LIST="0.5 1 2" OVO_DIR=~/ovo OUT=outputs/profiling/spark_ovo bash scripts/spark/ovo_qwen3vl.sh
+#   EXTRA=--stage_timing OUT=outputs/profiling/spark_ovo_stages bash scripts/spark/ovo_qwen3vl.sh   # vision / prefill / decode split
 # then: python -m profiling_scripts.ovo_energy_report outputs/profiling/spark_ovo
 set -e
 FPS_LIST=${FPS_LIST:-0.5 1 2}
@@ -34,7 +35,7 @@ echo "{\"idle_start\": $(date +%s.%N), \"idle_end\": $(sleep $IDLE_S; date +%s.%
 for FPS in $FPS_LIST; do # rerunning resumes: finished questions are skipped
     echo "===== ${FPS} fps"
     python scripts/ovo/qwen3vl_fps_eval.py --fps $FPS --out $OUT/qwen3vl8b_${FPS}fps.jsonl --ids $IDS \
-        --anno $OVO_DIR/ovo_bench_new.json --video_dir $OVO_DIR/src_videos --max_input_tokens $MAX_TOKENS 2>&1 | tee -a $OUT/qwen3vl8b_${FPS}fps.log
+        --anno $OVO_DIR/ovo_bench_new.json --video_dir $OVO_DIR/src_videos --max_input_tokens $MAX_TOKENS $EXTRA 2>&1 | tee -a $OUT/qwen3vl8b_${FPS}fps.log
     sleep $COOL_S
 done
 kill $LOGGER; wait $LOGGER 2>/dev/null || true

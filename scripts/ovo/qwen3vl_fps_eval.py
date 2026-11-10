@@ -29,6 +29,29 @@ Do not include any additional text or explanation in your response.
 """
 FACTOR = 32 # Qwen3-VL: 16-pixel patches, 2x2 merge
 
+class StageTimer:
+    """Splits model.generate into vision encode, prefill (first forward minus vision) and decode (later forwards), timed with
+    forward hooks and CUDA syncs around the whole model and its vision tower. The syncs cost a little time, so it is opt-in."""
+    def __init__(self, model):
+        self.calls, self.vision = [], []
+        for mod, store in ((model, self.calls), (model.model.visual, self.vision)):
+            mod.register_forward_pre_hook(lambda m, a, store=store: self._start(store))
+            mod.register_forward_hook(lambda m, a, o, store=store: self._stop(store))
+
+    def _start(self, store):
+        torch.cuda.synchronize(); store.append(-time.perf_counter())
+
+    def _stop(self, store):
+        torch.cuda.synchronize(); store[-1] += time.perf_counter()
+
+    def reset(self):
+        self.calls.clear(); self.vision.clear()
+
+    def result(self):
+        vision = sum(self.vision)
+        return dict(vision_s=round(vision, 4), prefill_s=round(self.calls[0] - vision, 4), decode_s=round(sum(self.calls[1:]), 4),
+                    decode_steps=len(self.calls) - 1)
+
 def frame_size(h, w, pixels):
     """Height and width with about `pixels` pixels, the source aspect ratio, and both sides multiples of FACTOR."""
     s = math.sqrt(pixels / (h * w))
@@ -96,6 +119,7 @@ def main():
     p.add_argument('--pixels', type=int, default=360 * 420, help='pixels per frame (OVO-Bench uses max_pixels 360*420 for Qwen2-VL)')
     p.add_argument('--max_new_tokens', type=int, default=16)
     p.add_argument('--limit', type=int, default=0, help='only the first N questions (smoke test)')
+    p.add_argument('--stage_timing', action='store_true', help='log vision / prefill / decode times per question (adds CUDA syncs)')
     p.add_argument('--ids', default=None, help='file with one question id per line: run only those (e.g. a Spark subset)')
     p.add_argument('--shard', default='0/1', help='i/n: every n-th question starting at i')
     p.add_argument('--max_input_tokens', type=int, default=0,
@@ -124,6 +148,7 @@ def main():
 
     model = Qwen3VLForConditionalGeneration.from_pretrained(args.model_path, dtype=torch.bfloat16, attn_implementation='sdpa').to('cuda').eval()
     processor = AutoProcessor.from_pretrained(args.model_path)
+    stages = StageTimer(model) if args.stage_timing else None
     os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
     with open(args.out, 'a') as f:
         for i, a in enumerate(todo):
@@ -151,6 +176,8 @@ def main():
                     print(f'[{i + 1}/{len(todo)}] id {a["id"]} skipped: {n_in} tokens > {args.max_input_tokens}', flush=True)
                     continue
                 torch.cuda.reset_peak_memory_stats()
+                if stages:
+                    stages.reset()
                 with torch.no_grad():
                     out = model.generate(**inputs, max_new_tokens=args.max_new_tokens, do_sample=False)
                 torch.cuda.synchronize()
@@ -160,6 +187,8 @@ def main():
                            visual_tokens=int(grid[0] * grid[1] * grid[2] // 4), input_tokens=int(inputs['input_ids'].shape[1]),
                            load_s=round(t1 - t0, 3), generate_s=round(time.perf_counter() - t1, 3),
                            peak_gb=round(torch.cuda.max_memory_allocated() / 1e9, 2))
+                if stages:
+                    row.update(stages.result())
             except Exception as e: # keep going; the scorer counts these as wrong, like OVO-Bench's own loop
                 row.update(response=None, error=f'{type(e).__name__}: {e}'[:500])
                 if isinstance(e, torch.cuda.OutOfMemoryError):
